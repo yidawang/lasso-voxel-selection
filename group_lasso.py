@@ -10,6 +10,7 @@ import logging
 from scipy.stats.mstats import zscore
 import cython_blas as blas
 from scipy import linalg, optimize
+from sklearn import linear_model
 
 format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 # if want to output log to a file instead of outputting log to the console,
@@ -101,9 +102,9 @@ def prepareFeatureVectors(data_dir, file_extension, seq_file, mask_file,
     #    for index in np.ndindex(mask.shape):
     #        if mask[index] != 0:
     #            masked_data[:, count1] = np.copy(data[index])
-    #            count1 += 1
+    #           count1 += 1
     #    activity_data.append(masked_data)
-    #    logger.info(
+    #   logger.info(
     #        'file %s is loaded and masked, with data shape %s' %
     #        (f, masked_data.shape)
     #    )
@@ -197,8 +198,10 @@ def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
             w_i[g] = 0.
             if H is not None:
                 X_residual = np.dot(H[g], w_i) - Xy[g]
+                #print(H[g].shape, w_i.shape, X_residual.shape)
             else:
-                X_residual = np.dot(X.T, np.dot(X[:, g], w_i)) - Xy[g]
+                #print(X.T.shape, X[:, g].shape, w_i.shape)
+                X_residual = np.dot(X.T[g, :], np.dot(X, w_i)) - Xy[g]
             qp = np.dot(eigvects.T, X_residual)
             if len(g) < 2:
                 # for single groups we know a closed form solution
@@ -213,7 +216,7 @@ def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
 
 
         # .. dual gap ..
-        max_inc = linalg.norm(w_old - w_new, np.inf)
+        #max_inc = linalg.norm(w_old - w_new, np.inf)
         if True: #max_inc < rtol * np.amax(w_new):
             residual = np.dot(X, w_new) - y
             group_norm = alpha * np.sum([linalg.norm(w_new[g], 2)
@@ -222,7 +225,7 @@ def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
                 norm_Anu = [linalg.norm(np.dot(H[g], w_new) - Xy[g]) \
                             for g in group_labels]
             else:
-                norm_Anu = [linalg.norm(np.dot(H[g], residual)) \
+                norm_Anu = [linalg.norm(np.dot(X.T[g, :], np.dot(X, w_new)) - Xy[g]) \
                             for g in group_labels]
             if np.any(norm_Anu > alpha):
                 nnu = residual * np.min(alpha / norm_Anu)
@@ -242,7 +245,7 @@ def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
 if __name__ == '__main__':
     time1 = time.time()
     n_tops = int(sys.argv[6])
-    X, y = prepareFeatureVectors(sys.argv[1], sys.argv[2], sys.argv[3],
+    feature_vectors, labels = prepareFeatureVectors(sys.argv[1], sys.argv[2], sys.argv[3],
                                  sys.argv[4], sys.argv[5], n_tops)
     time2 = time.time()
     logger.info(
@@ -251,14 +254,23 @@ if __name__ == '__main__':
     )
     time1 = time.time()
     n_samples = 204
-    groups = np.zeros((n_tops, n_tops), np.int)
-    for i in range(n_tops):
-        groups[i, :] = i
-    groups = groups.reshape(n_tops * n_tops)
-    coef = group_lasso(X[0: n_samples, :], y[0: n_samples], 0.1, groups)
+    #groups = np.zeros((n_tops, n_tops), np.int)
+    #for i in range(n_tops):
+    #    groups[i, :] = i
+    #groups = groups.reshape(n_tops * n_tops)
+    groups = np.zeros(n_tops * n_tops, np,int)
+    for i in range(n_tops*n_tops):
+        groups[i] = i
+    X = feature_vectors[0: n_samples, :]
+    y = labels[0: n_samples]
+    X = zscore(X, axis=0, ddof=0)
+    X = X / math.sqrt(X.shape[0])
+    #coef = group_lasso(X, y, 0.01, groups)
+    clf = linear_model.Lasso(alpha=0.01)
+    clf.fit(X, y)
     time2 = time.time()
     logger.info(
         'group lasso done, takes %.2f s' %
         (time2 - time1)
     )
-    np.save('lasso_coef', coef)
+    np.save('lasso_coef1', clf.coef_)
