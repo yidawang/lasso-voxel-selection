@@ -1,0 +1,5 @@
+__pycache__
+*.npy
+.idea
+*.iml
+.DS_Store
