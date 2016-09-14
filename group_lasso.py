@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format=format, stream=sys.stdout)
 logger = logging.getLogger(__name__)
 MAX_ITER = 1000
 
-def separateEpochs(activity_data, epoch_list):
+def separateEpochs(activity_data, activity_data2, epoch_list):
     """ separate data into epochs of interest specified in epoch_list
     and z-score them for computing correlation
 
@@ -27,6 +27,10 @@ def separateEpochs(activity_data, epoch_list):
     ----------
     activity_data: list of 2D array in shape [nTRs, nVoxels]
         the masked activity data organized in TR*voxel formats of all subjects
+        for correlation
+    activity_data2: list of 2D array in shape [nTRs, nVoxels]
+        the masked activity data organized in TR*voxel formats of all subjects
+        for activity
     epoch_list: list of 3D array in shape [condition, nEpochs, nTRs]
         specification of epochs and conditions
         assuming all subjects have the same number of epochs
@@ -38,23 +42,34 @@ def separateEpochs(activity_data, epoch_list):
         the data organized in epochs
         and z-scored in preparation of correlation computation
         len(raw_data) equals the number of epochs
+    avg_data: list of 1D array in shape [nVoxels,]
+        normalized average data over epochs
+        len(avg_data) equals the number of epochs
     labels: list of 1D array
         the condition labels of the epochs
         len(labels) labels equals the number of epochs
     """
     time1 = time.time()
     raw_data = []
+    avg_data = []
     labels = []
+    n_voxels = activity_data[0].shape[1]
     for sid in range(len(epoch_list)):
         epoch = epoch_list[sid]
+        # avg_per_subj is in shape [n_epochs_per_subj, n_voxels]
+        avg_per_subj = np.zeros([epoch.shape[1], n_voxels], np.float32, order='C')
+        count = 0
         for cond in range(epoch.shape[0]):
             sub_epoch = epoch[cond, :, :]
             for eid in range(epoch.shape[1]):
                 r = np.sum(sub_epoch[eid, :])
                 if r > 0:   # there is an epoch in this condition
-                    # mat is row-major
+                    # mat is row-major, in shape [epoch_length, n_voxels]
                     # regardless of the order of acitvity_data[sid]
                     mat = activity_data[sid][sub_epoch[eid, :] == 1, :]
+                    mat2 = activity_data2[sid][sub_epoch[eid, :] == 1, :]
+                    avg_per_subj[count, :] = np.copy(np.mean(mat2, axis=0))
+                    count += 1
                     mat = zscore(mat, axis=0, ddof=0)
                     # if zscore fails (standard deviation is zero),
                     # set all values to be zero
@@ -62,74 +77,94 @@ def separateEpochs(activity_data, epoch_list):
                     mat = mat / math.sqrt(r)
                     raw_data.append(mat)
                     labels.append(cond)
+        assert count == epoch.shape[1], \
+            'subject %d does not have right number of epochs, %d %d' % (sid, count, epoch.shape[1])
+        avg_per_subj = zscore(avg_per_subj, axis=0, ddof=0)
+        for i in range(avg_per_subj.shape[0]):
+            avg_data.append(avg_per_subj[i, :])
+    assert len(raw_data) == len(avg_data), \
+        'either raw_data or avg_data does not have right epochs'
     time2 = time.time()
     logger.info(
         'epoch separation done, takes %.2f s' %
         (time2 - time1)
     )
-    return raw_data, labels
+    return raw_data, avg_data, labels
 
-def prepareFeatureVectors(data_dir, file_extension, seq_file, mask_file,
-                          epoch_file, n_tops):
-    mask_img = nib.load(mask_file)
-    mask = mask_img.get_data()
-    count = 0
-    for index in np.ndindex(mask.shape):
-        if mask[index] != 0:
-            count += 1
+#def getSearchlightFeatures(data, masked_seq, feature_vectors):
+#    return feature_vectors
 
+def generateMaskedSeq(seq_file):
     seq_img = nib.load(seq_file)
     seq = seq_img.get_data()
-    # masked_seq is organized in inverse index
-    masked_seq = np.zeros([count], np.int, order='C')
-    count1 = 0
-    for index in np.ndindex(mask.shape):
-        if mask[index] != 0:
-            masked_seq[seq[index]-1] = count1
-            count1 += 1
+    count = len(np.where(seq>0)[0])
+    # masked_seq is organized in reversed index
+    masked_seq = [None] * count
+    for index in np.ndindex(seq.shape):
+        if seq[index] != 0:
+            masked_seq[seq[index]-1] = index
+    return masked_seq
+
+def prepareFeatureVectors(data_dir, file_extension, corr_seq_file, acti_seq_file,
+                          epoch_file, n_tops):
+    corr_masked_seq = generateMaskedSeq(corr_seq_file)
+    acti_masked_seq = generateMaskedSeq(acti_seq_file)
 
     files = [f for f in sorted(os.listdir(data_dir))
              if os.path.isfile(os.path.join(data_dir, f))
              and f.endswith(file_extension)]
-    #activity_data = []
-    #for f in files:
-    #    img = nib.load(os.path.join(data_dir, f))
-    #    data = img.get_data()
-    #    (d1, d2, d3, d4) = data.shape
-    #    masked_data = np.zeros([d4, count], np.float32, order='C')
-    #    count1 = 0
-    #    # perhaps can use np.where
-    #    for index in np.ndindex(mask.shape):
-    #        if mask[index] != 0:
-    #            masked_data[:, count1] = np.copy(data[index])
-    #           count1 += 1
-    #    activity_data.append(masked_data)
-    #   logger.info(
-    #        'file %s is loaded and masked, with data shape %s' %
-    #        (f, masked_data.shape)
-    #    )
+    activity_data = []
+    activity_data2 = []
+    for f in files:
+        img = nib.load(os.path.join(data_dir, f))
+        data = img.get_data()
+        (d1, d2, d3, d4) = data.shape
+        selected_data = np.zeros([d4, n_tops], np.float32, order='C')
+        count1 = 0
+        for index in corr_masked_seq[0: n_tops]:
+            selected_data[:, count1] = np.copy(data[index])
+            count1 += 1
+        activity_data.append(selected_data)
+        selected_data2 = np.zeros([d4, n_tops], np.float32, order='C')
+        count1 = 0
+        for index in acti_masked_seq[0: n_tops]:
+            selected_data2[:, count1] = np.copy(data[index])
+            count1 += 1
+        activity_data2.append(selected_data2)
+        logger.info(
+            'file %s is loaded and top-%d correlaton and acitivity voxels are selected, '
+            'with data shape %s' %
+            (f, n_tops, selected_data.shape)
+        )
     #np.save('activity_data', activity_data)
-    activity_data = np.load('activity_data.npy')
+    #activity_data = np.load('activity_data.npy')
 
     epoch_list = np.load(epoch_file)
-    raw_data, labels = separateEpochs(activity_data, epoch_list)
+    raw_data, avg_data, labels = separateEpochs(activity_data, activity_data2, epoch_list)
 
-    feature_vectors = np.zeros([len(raw_data), n_tops*n_tops], np.float32, order='C')
+    # feature_vectors is in shape [n_epochs, n_tops*n_tops+n_tops]
+    feature_vectors = np.zeros([len(raw_data), n_tops*n_tops+n_tops], np.float32, order='C')
+    # correlation features
     count = 0
-    for rd in raw_data:
+    for multiplier in raw_data:
         # multiplier is in fortran order (column-major) no matter of what rd is in
-        multiplier = rd[:, masked_seq[0: n_tops]]
         no_trans = 'N'
         trans = 'T'
-        blas.compute_correlation(trans, no_trans,
+        blas.compute_correlation(no_trans, trans,
                              n_tops, n_tops,
                              multiplier.shape[0], 1.0,
-                             multiplier, multiplier.shape[0],
-                             multiplier, multiplier.shape[0],
+                             multiplier, n_tops,
+                             multiplier, n_tops,
                              0.0, feature_vectors,
                              n_tops, count)
         count += 1
     #np.save('corr_feature_vectors', feature_vectors)
+    # activity features
+    #feature_vectors = getSearchlightFeatures(data, corr_masked_seq, feature_vectors)
+    for i in range(feature_vectors.shape[0]):
+        feature_vectors[i, n_tops*n_tops: n_tops*n_tops+n_tops] = np.copy(avg_data[i])
+
+    feature_vectors, labels = map(np.asanyarray, (feature_vectors, labels))
     return feature_vectors, labels
 
 def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
@@ -239,9 +274,13 @@ def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
             if np.abs(dual_gap / dual_obj) < rtol:
                 break
 
+    logger.info(
+        'LASSO done, iteration times: %d' % n_iter
+    )
+
     return w_new
 
-# python group_lasso.py ~/data/face_scene/raw/ nii.gz ~/data/face_scene/output_seq.nii.gz ~/data/face_scene/mask.nii.gz ~/IdeaProjects/brainiak/examples/fcma/data/fs_epoch_labels.npy 10
+# python group_lasso.py ~/data/face_scene/raw/ nii.gz ~/data/face_scene/results/corr/sub18_seq.nii.gz ~/data/face_scene/results/acti/sub18_seq.nii.gz ~/IdeaProjects/brainiak/examples/fcma/data/fs_epoch_labels.npy 10
 if __name__ == '__main__':
     time1 = time.time()
     n_tops = int(sys.argv[6])
@@ -261,16 +300,18 @@ if __name__ == '__main__':
     groups = np.zeros(n_tops * n_tops, np,int)
     for i in range(n_tops*n_tops):
         groups[i] = i
+    labels[labels==0] = -1
     X = feature_vectors[0: n_samples, :]
     y = labels[0: n_samples]
     X = zscore(X, axis=0, ddof=0)
     X = X / math.sqrt(X.shape[0])
     #coef = group_lasso(X, y, 0.01, groups)
-    clf = linear_model.Lasso(alpha=0.01)
+    clf = linear_model.Lasso(alpha=0.005)
     clf.fit(X, y)
+    print(clf.predict(feature_vectors[n_samples:, :]), labels[n_samples:])
     time2 = time.time()
     logger.info(
         'group lasso done, takes %.2f s' %
         (time2 - time1)
     )
-    np.save('lasso_coef1', clf.coef_)
+    np.save('lasso_coef', clf.coef_)

@@ -16,9 +16,9 @@ def compute_correlation(py_trans_a, py_trans_b, py_m, py_n, py_k, py_alpha, py_a
     cdef float alpha, beta
     alpha = py_alpha
     beta = py_beta
-    cdef float[::1, :] A
+    cdef float[:, ::1] A
     A = py_a
-    cdef float[::1, :] B
+    cdef float[:, ::1] B
     B = py_b
     cdef float[:, ::1] C
     C = py_c
