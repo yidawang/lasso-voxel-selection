@@ -320,15 +320,24 @@ if __name__ == '__main__':
          n_tops*n_tops, n_tops,
          len(np.where(clf.coef_[0:n_tops*n_tops]!=0)[0]), len(np.where(clf.coef_[n_tops*n_tops:]!=0)[0]))
     )
-    predict_results = np.sign(clf.predict(feature_vectors[start_test_sample:end_test_sample, :]))
+    predict_weights = clf.predict(feature_vectors[start_test_sample:end_test_sample, :])
+    predict_results = np.sign(predict_weights)
     n_correct = np.count_nonzero(predict_results == labels[start_test_sample:end_test_sample])
-    logger.info(
-        'prediction accuracy: %d/%d=%.2f%%' %
-        (n_correct, len(predict_results), n_correct*100.0/len(predict_results))
-    )
     time2 = time.time()
     logger.info(
         'LASSO done, takes %.2f s' %
         (time2 - time1)
+    )
+    logger.debug(
+        'predictions are %s' %
+        predict_weights
+    )
+    logger.debug(
+        'ground truth labels are %s' %
+        labels[start_test_sample:end_test_sample]
+    )
+    logger.info(
+        'prediction accuracy: %d/%d=%.2f%%' %
+        (n_correct, len(predict_results), n_correct*100.0/len(predict_results))
     )
     #np.save('lasso_coef', clf.coef_)
