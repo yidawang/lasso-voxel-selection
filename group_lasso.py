@@ -85,7 +85,7 @@ def separateEpochs(activity_data, activity_data2, epoch_list):
     assert len(raw_data) == len(avg_data), \
         'either raw_data or avg_data does not have right epochs'
     time2 = time.time()
-    logger.info(
+    logger.debug(
         'epoch separation done, takes %.2f s' %
         (time2 - time1)
     )
@@ -113,6 +113,7 @@ def prepareFeatureVectors(data_dir, file_extension, corr_seq_file, acti_seq_file
     files = [f for f in sorted(os.listdir(data_dir))
              if os.path.isfile(os.path.join(data_dir, f))
              and f.endswith(file_extension)]
+    n_subjs = len(files)
     activity_data = []
     activity_data2 = []
     for f in files:
@@ -131,7 +132,7 @@ def prepareFeatureVectors(data_dir, file_extension, corr_seq_file, acti_seq_file
             selected_data2[:, count1] = np.copy(data[index])
             count1 += 1
         activity_data2.append(selected_data2)
-        logger.info(
+        logger.debug(
             'file %s is loaded and top-%d correlaton and acitivity voxels are selected, '
             'with data shape %s' %
             (f, n_tops, selected_data.shape)
@@ -165,7 +166,7 @@ def prepareFeatureVectors(data_dir, file_extension, corr_seq_file, acti_seq_file
         feature_vectors[i, n_tops*n_tops: n_tops*n_tops+n_tops] = np.copy(avg_data[i])
 
     feature_vectors, labels = map(np.asanyarray, (feature_vectors, labels))
-    return feature_vectors, labels
+    return feature_vectors, labels, n_subjs
 
 def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
                 verbose=False):
@@ -275,7 +276,7 @@ def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
                 break
 
     logger.info(
-        'LASSO done, iteration times: %d' % n_iter
+        'Group LASSO done, iteration times: %d' % n_iter
     )
 
     return w_new
@@ -284,7 +285,9 @@ def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
 if __name__ == '__main__':
     time1 = time.time()
     n_tops = int(sys.argv[6])
-    feature_vectors, labels = prepareFeatureVectors(sys.argv[1], sys.argv[2], sys.argv[3],
+    # left_out is 0-based subject id
+    left_out = int(sys.argv[7])
+    feature_vectors, labels, n_subjs = prepareFeatureVectors(sys.argv[1], sys.argv[2], sys.argv[3],
                                  sys.argv[4], sys.argv[5], n_tops)
     time2 = time.time()
     logger.info(
@@ -292,26 +295,40 @@ if __name__ == '__main__':
         (time2 - time1)
     )
     time1 = time.time()
-    n_samples = 204
     #groups = np.zeros((n_tops, n_tops), np.int)
     #for i in range(n_tops):
     #    groups[i, :] = i
     #groups = groups.reshape(n_tops * n_tops)
-    groups = np.zeros(n_tops * n_tops, np,int)
-    for i in range(n_tops*n_tops):
-        groups[i] = i
+    #groups = np.zeros(n_tops * n_tops, np,int)
+    #for i in range(n_tops*n_tops):
+    #    groups[i] = i
     labels[labels==0] = -1
-    X = feature_vectors[0: n_samples, :]
-    y = labels[0: n_samples]
+    n_per_subjs = int(len(labels) / n_subjs)
+    start_test_sample = n_per_subjs * left_out
+    end_test_sample = start_test_sample + n_per_subjs
+    X = np.concatenate((feature_vectors[0: start_test_sample, :], feature_vectors[end_test_sample:, :]))
+    y = np.concatenate((labels[0: start_test_sample], labels[end_test_sample:]))
     X = zscore(X, axis=0, ddof=0)
     X = X / math.sqrt(X.shape[0])
     #coef = group_lasso(X, y, 0.01, groups)
     clf = linear_model.Lasso(alpha=0.005)
     clf.fit(X, y)
-    print(clf.predict(feature_vectors[n_samples:, :]), labels[n_samples:])
+    logger.info(
+        '%d features have been selected from %d features (%d correlation + %d activity), '
+        'of which %d are from correlation, %d are from activity' %
+        (len(np.where(clf.coef_!=0)[0]), clf.coef_.shape[0],
+         n_tops*n_tops, n_tops,
+         len(np.where(clf.coef_[0:n_tops*n_tops]!=0)[0]), len(np.where(clf.coef_[n_tops*n_tops:]!=0)[0]))
+    )
+    predict_results = np.sign(clf.predict(feature_vectors[start_test_sample:end_test_sample, :]))
+    n_correct = np.count_nonzero(predict_results == labels[start_test_sample:end_test_sample])
+    logger.info(
+        'prediction accuracy: %d/%d=%.2f%%' %
+        (n_correct, len(predict_results), n_correct*100.0/len(predict_results))
+    )
     time2 = time.time()
     logger.info(
-        'group lasso done, takes %.2f s' %
+        'LASSO done, takes %.2f s' %
         (time2 - time1)
     )
-    np.save('lasso_coef', clf.coef_)
+    #np.save('lasso_coef', clf.coef_)
