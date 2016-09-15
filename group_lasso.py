@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format=format, stream=sys.stdout)
 logger = logging.getLogger(__name__)
 MAX_ITER = 1000
 
-def separateEpochs(activity_data, activity_data2, epoch_list):
+def separateEpochs(activity_data, activity_data2, corr_epoch_list, acti_epoch_list):
     """ separate data into epochs of interest specified in epoch_list
     and z-score them for computing correlation
 
@@ -31,14 +31,18 @@ def separateEpochs(activity_data, activity_data2, epoch_list):
     activity_data2: list of 2D array in shape [nTRs, nVoxels]
         the masked activity data organized in TR*voxel formats of all subjects
         for activity
-    epoch_list: list of 3D array in shape [condition, nEpochs, nTRs]
+    corr_epoch_list: list of 3D array in shape [condition, nEpochs, nTRs]
         specification of epochs and conditions
         assuming all subjects have the same number of epochs
-        len(epoch_list) equals the number of subjects
+        len(corr_epoch_list) equals the number of subjects
+    acti_epoch_list: list of 3D array in shape [condition, nEpochs, nTRs]
+        specification of epochs and conditions
+        assuming all subjects have the same number of epochs
+        len(acti_epoch_list) equals the number of subjects
 
     Returns
     -------
-    raw_data: list of 2D array in shape [epoch length, nVoxels]
+    raw_data: list of 2D array in shape [corr_epoch length, nVoxels]
         the data organized in epochs
         and z-scored in preparation of correlation computation
         len(raw_data) equals the number of epochs
@@ -54,22 +58,22 @@ def separateEpochs(activity_data, activity_data2, epoch_list):
     avg_data = []
     labels = []
     n_voxels = activity_data[0].shape[1]
-    for sid in range(len(epoch_list)):
-        epoch = epoch_list[sid]
+    for sid in range(len(corr_epoch_list)):
+        corr_epoch = corr_epoch_list[sid]
+        acti_epoch = acti_epoch_list[sid]
         # avg_per_subj is in shape [n_epochs_per_subj, n_voxels]
-        avg_per_subj = np.zeros([epoch.shape[1], n_voxels], np.float32, order='C')
+        avg_per_subj = np.zeros([acti_epoch.shape[1], n_voxels], np.float32, order='C')
         count = 0
-        for cond in range(epoch.shape[0]):
-            sub_epoch = epoch[cond, :, :]
-            for eid in range(epoch.shape[1]):
-                r = np.sum(sub_epoch[eid, :])
-                if r > 0:   # there is an epoch in this condition
+        for cond in range(corr_epoch.shape[0]):
+            corr_sub_epoch = corr_epoch[cond, :, :]
+            acti_sub_epoch = acti_epoch[cond, :, :]
+            for eid in range(corr_epoch.shape[1]):
+                # correlation epochs
+                r = np.sum(corr_sub_epoch[eid, :])
+                if r > 0:   # there is an corr_epoch in this condition
                     # mat is row-major, in shape [epoch_length, n_voxels]
                     # regardless of the order of acitvity_data[sid]
-                    mat = activity_data[sid][sub_epoch[eid, :] == 1, :]
-                    mat2 = activity_data2[sid][sub_epoch[eid, :] == 1, :]
-                    avg_per_subj[count, :] = np.copy(np.mean(mat2, axis=0))
-                    count += 1
+                    mat = activity_data[sid][corr_sub_epoch[eid, :] == 1, :]
                     mat = zscore(mat, axis=0, ddof=0)
                     # if zscore fails (standard deviation is zero),
                     # set all values to be zero
@@ -77,8 +81,14 @@ def separateEpochs(activity_data, activity_data2, epoch_list):
                     mat = mat / math.sqrt(r)
                     raw_data.append(mat)
                     labels.append(cond)
-        assert count == epoch.shape[1], \
-            'subject %d does not have right number of epochs, %d %d' % (sid, count, epoch.shape[1])
+                # activity epochs
+                r = np.sum(acti_sub_epoch[eid, :])
+                if r > 0:
+                    mat2 = activity_data2[sid][corr_sub_epoch[eid, :] == 1, :]
+                    avg_per_subj[count, :] = np.copy(np.mean(mat2, axis=0))
+                    count += 1
+        assert count == corr_epoch.shape[1], \
+            'subject %d does not have right number of epochs, %d %d' % (sid, count, corr_epoch.shape[1])
         avg_per_subj = zscore(avg_per_subj, axis=0, ddof=0)
         for i in range(avg_per_subj.shape[0]):
             avg_data.append(avg_per_subj[i, :])
@@ -86,7 +96,7 @@ def separateEpochs(activity_data, activity_data2, epoch_list):
         'either raw_data or avg_data does not have right epochs'
     time2 = time.time()
     logger.debug(
-        'epoch separation done, takes %.2f s' %
+        'corr_epoch separation done, takes %.2f s' %
         (time2 - time1)
     )
     return raw_data, avg_data, labels
@@ -106,7 +116,7 @@ def generateMaskedSeq(seq_file):
     return masked_seq
 
 def prepareFeatureVectors(data_dir, file_extension, corr_seq_file, acti_seq_file,
-                          epoch_file, n_tops):
+                          corr_epoch_file, acti_epoch_file, n_tops):
     corr_masked_seq = generateMaskedSeq(corr_seq_file)
     acti_masked_seq = generateMaskedSeq(acti_seq_file)
 
@@ -140,8 +150,9 @@ def prepareFeatureVectors(data_dir, file_extension, corr_seq_file, acti_seq_file
     #np.save('activity_data', activity_data)
     #activity_data = np.load('activity_data.npy')
 
-    epoch_list = np.load(epoch_file)
-    raw_data, avg_data, labels = separateEpochs(activity_data, activity_data2, epoch_list)
+    corr_epoch_list = np.load(corr_epoch_file)
+    acti_epoch_list = np.load(acti_epoch_file)
+    raw_data, avg_data, labels = separateEpochs(activity_data, activity_data2, corr_epoch_list, acti_epoch_list)
 
     # feature_vectors is in shape [n_epochs, n_tops*n_tops+n_tops]
     feature_vectors = np.zeros([len(raw_data), n_tops*n_tops+n_tops], np.float32, order='C')
@@ -284,11 +295,11 @@ def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
 # python group_lasso.py ~/data/face_scene/raw/ nii.gz ~/data/face_scene/results/corr/sub18_seq.nii.gz ~/data/face_scene/results/acti/sub18_seq.nii.gz ~/IdeaProjects/brainiak/examples/fcma/data/fs_epoch_labels.npy 10
 if __name__ == '__main__':
     time1 = time.time()
-    n_tops = int(sys.argv[6])
+    n_tops = int(sys.argv[7])
     # left_out is 0-based subject id
-    left_out = int(sys.argv[7])
+    left_out = int(sys.argv[8])
     feature_vectors, labels, n_subjs = prepareFeatureVectors(sys.argv[1], sys.argv[2], sys.argv[3],
-                                 sys.argv[4], sys.argv[5], n_tops)
+                                 sys.argv[4], sys.argv[5], sys.argv[6], n_tops)
     time2 = time.time()
     logger.info(
         'feature vector preparation done, takes %.2f s' %
