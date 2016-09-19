@@ -84,7 +84,7 @@ def separateEpochs(activity_data, activity_data2, corr_epoch_list, acti_epoch_li
                 # activity epochs
                 r = np.sum(acti_sub_epoch[eid, :])
                 if r > 0:
-                    mat2 = activity_data2[sid][corr_sub_epoch[eid, :] == 1, :]
+                    mat2 = activity_data2[sid][acti_sub_epoch[eid, :] == 1, :]
                     avg_per_subj[count, :] = np.copy(np.mean(mat2, axis=0))
                     count += 1
         assert count == corr_epoch.shape[1], \
