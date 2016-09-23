@@ -292,7 +292,7 @@ def group_lasso(X, y, alpha, groups, max_iter=MAX_ITER, rtol=1e-6,
 
     return w_new
 
-# python group_lasso.py ~/data/face_scene/raw/ nii.gz ~/data/face_scene/results/corr/sub18_seq.nii.gz ~/data/face_scene/results/acti/sub18_seq.nii.gz ~/IdeaProjects/brainiak/examples/fcma/data/fs_epoch_labels.npy 10
+# python group_lasso.py ~/data/face_scene/raw/ nii.gz ~/data/face_scene/results/corr/sub18_seq.nii.gz ~/data/face_scene/results/acti/sub18_seq.nii.gz ~/IdeaProjects/brainiak/examples/fcma/data/fs_epoch_labels.npy ~/IdeaProjects/brainiak/examples/fcma/data/fs_epoch_labels.npy 10 17
 if __name__ == '__main__':
     time1 = time.time()
     n_tops = int(sys.argv[7])
@@ -322,14 +322,16 @@ if __name__ == '__main__':
     X = zscore(X, axis=0, ddof=0)
     X = X / math.sqrt(X.shape[0])
     #coef = group_lasso(X, y, 0.01, groups)
-    clf = linear_model.Lasso(alpha=0.005)
+    #clf = linear_model.Lasso(alpha=0.005)
+    clf = linear_model.LassoCV(alphas=np.array([.0001, .0005, .001, .005, .01, .05, .1]))
     clf.fit(X, y)
     logger.info(
         '%d features have been selected from %d features (%d correlation + %d activity), '
-        'of which %d are from correlation, %d are from activity' %
+        'of which %d are from correlation, %d are from activity. chosen alpha %f' %
         (len(np.where(clf.coef_!=0)[0]), clf.coef_.shape[0],
          n_tops*n_tops, n_tops,
-         len(np.where(clf.coef_[0:n_tops*n_tops]!=0)[0]), len(np.where(clf.coef_[n_tops*n_tops:]!=0)[0]))
+         len(np.where(clf.coef_[0:n_tops*n_tops]!=0)[0]), len(np.where(clf.coef_[n_tops*n_tops:]!=0)[0]),
+         clf.alpha_)
     )
     predict_weights = clf.predict(feature_vectors[start_test_sample:end_test_sample, :])
     predict_results = np.sign(predict_weights)
