@@ -323,7 +323,7 @@ if __name__ == '__main__':
     X = X / math.sqrt(X.shape[0])
     #coef = group_lasso(X, y, 0.01, groups)
     #clf = linear_model.Lasso(alpha=0.005)
-    clf = linear_model.LassoCV()
+    clf = linear_model.LassoCV(max_iter=10000, n_jobs=-1)
     clf.fit(X, y)
     logger.info(
         '%d features have been selected from %d features (%d correlation + %d activity), '
