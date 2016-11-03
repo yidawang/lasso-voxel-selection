@@ -154,8 +154,10 @@ def prepareFeatureVectors(data_dir, file_extension, corr_seq_file, acti_seq_file
     acti_epoch_list = np.load(acti_epoch_file)
     raw_data, avg_data, labels = separateEpochs(activity_data, activity_data2, corr_epoch_list, acti_epoch_list)
 
-    # feature_vectors is in shape [n_epochs, n_tops*n_tops+n_tops]
-    feature_vectors = np.zeros([len(raw_data), n_tops*n_tops+n_tops], np.float32, order='C')
+    # feature_vectors is in shape [n_epochs, n_tops*(n_tops-1)/2+n_tops]
+    num_corr_features = int(n_tops*(n_tops-1)/2)
+    feature_vectors = np.zeros([len(raw_data), num_corr_features+n_tops], np.float32, order='C')
+    corr_buf = np.zeros([n_tops, n_tops], np.float32, order='C')
     # correlation features
     count = 0
     for multiplier in raw_data:
@@ -167,14 +169,18 @@ def prepareFeatureVectors(data_dir, file_extension, corr_seq_file, acti_seq_file
                              multiplier.shape[0], 1.0,
                              multiplier, n_tops,
                              multiplier, n_tops,
-                             0.0, feature_vectors,
-                             n_tops, count)
+                             0.0, corr_buf,
+                             n_tops)
+        count1 = 0
+        for i in range(n_tops):
+            feature_vectors[count, count1:count1+i] = corr_buf[i, 0:i]
+            count1 += i
         count += 1
     #np.save('corr_feature_vectors', feature_vectors)
     # activity features
     #feature_vectors = getSearchlightFeatures(data, corr_masked_seq, feature_vectors)
     for i in range(feature_vectors.shape[0]):
-        feature_vectors[i, n_tops*n_tops: n_tops*n_tops+n_tops] = np.copy(avg_data[i])
+        feature_vectors[i, num_corr_features: num_corr_features+n_tops] = np.copy(avg_data[i])
 
     feature_vectors, labels = map(np.asanyarray, (feature_vectors, labels))
     return feature_vectors, labels, n_subjs
@@ -325,15 +331,19 @@ if __name__ == '__main__':
     #clf = linear_model.Lasso(alpha=0.005)
     clf = linear_model.LassoCV(max_iter=10000, n_jobs=-1)
     clf.fit(X, y)
+    num_corr_features = int(n_tops*(n_tops-1)/2)
     logger.info(
         '%d features have been selected from %d features (%d correlation + %d activity), '
         'of which %d are from correlation, %d are from activity. chosen alpha %f' %
         (len(np.where(clf.coef_!=0)[0]), clf.coef_.shape[0],
-         n_tops*n_tops, n_tops,
-         len(np.where(clf.coef_[0:n_tops*n_tops]!=0)[0]), len(np.where(clf.coef_[n_tops*n_tops:]!=0)[0]),
+         num_corr_features, n_tops,
+         len(np.where(clf.coef_[0:num_corr_features]!=0)[0]), len(np.where(clf.coef_[num_corr_features:]!=0)[0]),
          clf.alpha_)
     )
-    predict_weights = clf.predict(feature_vectors[start_test_sample:end_test_sample, :])
+    test_set = feature_vectors[start_test_sample:end_test_sample, :]
+    test_set = zscore(test_set, axis=0, ddof=0)
+    test_set = test_set / math.sqrt(test_set.shape[0])
+    predict_weights = clf.predict(test_set)
     predict_results = np.sign(predict_weights)
     n_correct = np.count_nonzero(predict_results == labels[start_test_sample:end_test_sample])
     time2 = time.time()
