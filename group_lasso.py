@@ -170,7 +170,7 @@ def prepareFeatureVectors(data_dir, file_extension, corr_seq_file, acti_seq_file
                              multiplier, n_tops,
                              multiplier, n_tops,
                              0.0, corr_buf,
-                             n_tops)
+                             n_tops, 0)
         count1 = 0
         for i in range(n_tops):
             feature_vectors[count, count1:count1+i] = corr_buf[i, 0:i]
